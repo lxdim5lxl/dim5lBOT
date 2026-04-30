@@ -1,100 +1,171 @@
-/**
- * Include the Geode headers.
- */
 #include <Geode/Geode.hpp>
+#include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/GJBaseGameLayer.hpp>
+#include <vector>
+#include <fstream>
 
-/**
- * Brings cocos2d and all Geode namespaces to the current scope.
- */
 using namespace geode::prelude;
 
-/**
- * `$modify` lets you extend and modify GD's classes.
- * To hook a function in Geode, simply $modify the class
- * and write a new function definition with the signature of
- * the function you want to hook.
- *
- * Here we use the overloaded `$modify` macro to set our own class name,
- * so that we can use it for button callbacks.
- *
- * Notice the header being included, you *must* include the header for
- * the class you are modifying, or you will get a compile error.
- *
- * Another way you could do this is like this:
- *
- * struct MyMenuLayer : Modify<MyMenuLayer, MenuLayer> {};
- */
-#include <Geode/modify/MenuLayer.hpp>
-class $modify(MyMenuLayer, MenuLayer) {
-	/**
-	 * Typically classes in GD are initialized using the `init` function, (though not always!),
-	 * so here we use it to add our own button to the bottom menu.
-	 *
-	 * Note that for all hooks, your signature has to *match exactly*,
-	 * `void init()` would not place a hook!
-	*/
-	bool init() {
-		/**
-		 * We call the original init function so that the
-		 * original class is properly initialized.
-		 */
-		if (!MenuLayer::init()) {
-			return false;
-		}
+// ===== Macro Data =====
+struct MacroFrame {
+    int frame;
+    bool player1Hold;
+    bool player2Hold;
+};
 
-		/**
-		 * You can use methods from the `geode::log` namespace to log messages to the console,
-		 * being useful for debugging and such. See this page for more info about logging:
-		 * https://docs.geode-sdk.org/tutorials/logging
-		*/
-		log::debug("Hello from my MenuLayer::init hook! This layer has {} children.", this->getChildrenCount());
+std::vector<MacroFrame> macroFrames;
+bool isRecording = false;
+bool isPlaying = false;
+int currentFrame = 0;
+int playbackIndex = 0;
 
-		/**
-		 * See this page for more info about buttons
-		 * https://docs.geode-sdk.org/tutorials/buttons
-		*/
-		auto myButton = CCMenuItemSpriteExtra::create(
-			CCSprite::createWithSpriteFrameName("GJ_likeBtn_001.png"),
-			this,
-			/**
-			 * Here we use the name we set earlier for our modify class.
-			*/
-			menu_selector(MyMenuLayer::onMyButton)
-		);
+// ===== PlayLayer Hook =====
+class $modify(PlayLayer) {
+    void resetLevel() {
+        PlayLayer::resetLevel();
+        currentFrame = 0;
+        playbackIndex = 0;
+    }
 
-		/**
-		 * Here we access the `bottom-menu` node by its ID, and add our button to it.
-		 * Node IDs are a Geode feature, see this page for more info about it:
-		 * https://docs.geode-sdk.org/tutorials/nodetree
-		*/
-		auto menu = this->getChildByID("bottom-menu");
-		menu->addChild(myButton);
+    void update(float dt) {
+        PlayLayer::update(dt);
 
-		/**
-		 * The `_spr` string literal operator just prefixes the string with
-		 * your mod id followed by a slash. This is good practice for setting your own node ids.
-		*/
-		myButton->setID("my-button"_spr);
+        if (isRecording) {
+            MacroFrame f;
+            f.frame = currentFrame;
+            f.player1Hold = m_player1->m_isHolding;
+            f.player2Hold = m_player2 ? m_player2->m_isHolding : false;
+            macroFrames.push_back(f);
+            currentFrame++;
+        }
 
-		/**
-		 * We update the layout of the menu to ensure that our button is properly placed.
-		 * This is yet another Geode feature, see this page for more info about it:
-		 * https://docs.geode-sdk.org/tutorials/layouts
-		*/
-		menu->updateLayout();
+        if (isPlaying && playbackIndex < macroFrames.size()) {
+            auto& f = macroFrames[playbackIndex];
+            if (f.frame == currentFrame) {
+                if (f.player1Hold) {
+                    m_player1->pushButton(PlayerButton::Jump);
+                } else {
+                    m_player1->releaseButton(PlayerButton::Jump);
+                }
+                playbackIndex++;
+            }
+            currentFrame++;
+        }
+    }
+};
 
-		/**
-		 * We return `true` to indicate that the class was properly initialized.
-		 */
-		return true;
-	}
+// ===== Bot Menu Layer =====
+class BotMenuLayer : public CCLayer {
+public:
+    static BotMenuLayer* create() {
+        auto ret = new BotMenuLayer();
+        if (ret && ret->init()) {
+            ret->autorelease();
+            return ret;
+        }
+        delete ret;
+        return nullptr;
+    }
 
-	/**
-	 * This is the callback function for the button we created earlier.
-	 * The signature for button callbacks must always be the same,
-	 * return type `void` and taking a `CCObject*`.
-	*/
-	void onMyButton(CCObject*) {
-		FLAlertLayer::create("Geode", "Hello from my custom mod!", "OK")->show();
-	}
+    bool init() {
+        if (!CCLayer::init()) return false;
+
+        auto winSize = CCDirector::sharedDirector()->getWinSize();
+
+        // Background
+        auto bg = CCScale9Sprite::create("GJ_square01.png");
+        bg->setContentSize({320, 260});
+        bg->setPosition(winSize / 2);
+        addChild(bg);
+
+        // Title
+        auto title = CCLabelBMFont::create("dim5lBOT", "goldFont.fnt");
+        title->setPosition(winSize.width / 2, winSize.height / 2 + 100);
+        title->setScale(0.8f);
+        addChild(title);
+
+        // Record button
+        auto recBtn = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Record", "goldFont.fnt", "GJ_button_01.png"),
+            this, menu_selector(BotMenuLayer::onRecord)
+        );
+
+        // Play button
+        auto playBtn = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Play", "goldFont.fnt", "GJ_button_02.png"),
+            this, menu_selector(BotMenuLayer::onPlay)
+        );
+
+        // Stop button
+        auto stopBtn = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Stop", "goldFont.fnt", "GJ_button_06.png"),
+            this, menu_selector(BotMenuLayer::onStop)
+        );
+
+        // Close button
+        auto closeBtn = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Close", "goldFont.fnt", "GJ_button_05.png"),
+            this, menu_selector(BotMenuLayer::onClose)
+        );
+
+        auto menu = CCMenu::create(recBtn, playBtn, stopBtn, closeBtn, nullptr);
+        menu->alignItemsVerticallyWithPadding(8);
+        menu->setPosition(winSize / 2);
+        addChild(menu);
+
+        return true;
+    }
+
+    void onRecord(CCObject*) {
+        macroFrames.clear();
+        isRecording = true;
+        isPlaying = false;
+        FLAlertLayer::create("dim5lBOT", "Recording started!", "OK")->show();
+    }
+
+    void onPlay(CCObject*) {
+        if (macroFrames.empty()) {
+            FLAlertLayer::create("dim5lBOT", "No macro recorded!", "OK")->show();
+            return;
+        }
+        isRecording = false;
+        isPlaying = true;
+        playbackIndex = 0;
+        currentFrame = 0;
+        FLAlertLayer::create("dim5lBOT", "Playback started!", "OK")->show();
+    }
+
+    void onStop(CCObject*) {
+        isRecording = false;
+        isPlaying = false;
+        FLAlertLayer::create("dim5lBOT", "Stopped!", "OK")->show();
+    }
+
+    void onClose(CCObject*) {
+        removeFromParentAndCleanup(true);
+    }
+};
+
+// ===== Add Button to Main Menu =====
+class $modify(MenuLayer) {
+    bool init() {
+        if (!MenuLayer::init()) return false;
+
+        auto botBtn = CCMenuItemSpriteExtra::create(
+            CircleButtonSprite::createWithSpriteFrameName("geode.loader/geode-logo-outline-gold.png"),
+            this,
+            menu_selector(ModifiedMenuLayer::onBotMenu)
+        );
+
+        auto menu = CCMenu::create(botBtn, nullptr);
+        menu->setPosition(CCPoint(30, 30));
+        addChild(menu);
+
+        return true;
+    }
+
+    void onBotMenu(CCObject*) {
+        auto layer = BotMenuLayer::create();
+        addChild(layer);
+    }
 };
