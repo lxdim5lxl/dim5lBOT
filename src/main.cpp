@@ -137,14 +137,14 @@ public:
 };
 
 // ===== Add Button to Main Menu =====
-class $modify(MenuLayer) {
+class $modify(MyMenuLayer, MenuLayer) {
     bool init() {
         if (!MenuLayer::init()) return false;
 
         auto botBtn = CCMenuItemSpriteExtra::create(
             CircleButtonSprite::createWithSpriteFrameName("geode.loader/geode-logo-outline-gold.png"),
             this,
-            menu_selector(ModifiedMenuLayer::onBotMenu)
+            menu_selector(ModifiedMenuLayer_onBotMenu)
         );
 
         auto menu = CCMenu::create(botBtn, nullptr);
