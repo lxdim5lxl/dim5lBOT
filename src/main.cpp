@@ -1,8 +1,7 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
-#include <Geode/modify/GJBaseGameLayer.hpp>
+#include <Geode/modify/MenuLayer.hpp>
 #include <vector>
-#include <fstream>
 
 using namespace geode::prelude;
 
@@ -33,13 +32,13 @@ class $modify(PlayLayer) {
         if (isRecording) {
             MacroFrame f;
             f.frame = currentFrame;
-            f.player1Hold = m_player1->m_isHolding;
-            f.player2Hold = m_player2 ? m_player2->m_isHolding : false;
+            f.player1Hold = m_player1->m_jumpBuffered;
+            f.player2Hold = m_player2 ? m_player2->m_jumpBuffered : false;
             macroFrames.push_back(f);
             currentFrame++;
         }
 
-        if (isPlaying && playbackIndex < macroFrames.size()) {
+        if (isPlaying && playbackIndex < (int)macroFrames.size()) {
             auto& f = macroFrames[playbackIndex];
             if (f.frame == currentFrame) {
                 if (f.player1Hold) {
@@ -72,37 +71,28 @@ public:
 
         auto winSize = CCDirector::sharedDirector()->getWinSize();
 
-        // Background
         auto bg = CCScale9Sprite::create("GJ_square01.png");
         bg->setContentSize({320, 260});
         bg->setPosition(winSize / 2);
         addChild(bg);
 
-        // Title
         auto title = CCLabelBMFont::create("dim5lBOT", "goldFont.fnt");
         title->setPosition(winSize.width / 2, winSize.height / 2 + 100);
         title->setScale(0.8f);
         addChild(title);
 
-        // Record button
         auto recBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Record", "goldFont.fnt", "GJ_button_01.png"),
             this, menu_selector(BotMenuLayer::onRecord)
         );
-
-        // Play button
         auto playBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Play", "goldFont.fnt", "GJ_button_02.png"),
             this, menu_selector(BotMenuLayer::onPlay)
         );
-
-        // Stop button
         auto stopBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Stop", "goldFont.fnt", "GJ_button_06.png"),
             this, menu_selector(BotMenuLayer::onStop)
         );
-
-        // Close button
         auto closeBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Close", "goldFont.fnt", "GJ_button_05.png"),
             this, menu_selector(BotMenuLayer::onClose)
