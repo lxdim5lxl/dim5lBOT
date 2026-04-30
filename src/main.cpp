@@ -144,7 +144,7 @@ class $modify(MyMenuLayer, MenuLayer) {
         auto botBtn = CCMenuItemSpriteExtra::create(
             CircleButtonSprite::createWithSpriteFrameName("geode.loader/geode-logo-outline-gold.png"),
             this,
-            menu_selector(ModifiedMenuLayer_onBotMenu)
+            menu_selector(MyMenuLayer::onBotMenu)
         );
 
         auto menu = CCMenu::create(botBtn, nullptr);
