@@ -1,31 +1,36 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/MenuLayer.hpp>
+#include <Geode/modify/PauseLayer.hpp>
+#include <Geode/modify/EndLevelLayer.hpp>
+#include <Geode/modify/PlayerObject.hpp>
 #include <vector>
 #include <fstream>
 #include <filesystem>
 #include <sstream>
+#include <algorithm>
 
 using namespace geode::prelude;
 
-// ===== Macro Data =====
 struct MacroInput {
-    int pressFrame;
-    int releaseFrame;
+    int frame;
+    bool pressed;
     bool player2;
 };
 
-std::vector<MacroInput> macroInputs;
-bool isRecording = false;
-bool isPlaying = false;
-int currentFrame = 0;
-int playbackIndex = 0;
+struct GlobalState {
+    std::vector<MacroInput> inputs;
+    bool recording = false;
+    bool playing = false;
+    int frame = 0;
+    int playIndex = 0;
+};
 
-// Temp recording state
-bool prevP1 = false;
-bool prevP2 = false;
-int pressStartP1 = -1;
-int pressStartP2 = -1;
+static GlobalState g;
+
+static PlayLayer* getPlayLayer() {
+    return PlayLayer::get();
+}
 
 std::filesystem::path getSavePath() {
     auto path = std::filesystem::path(geode::dirs::getSaveDir()) / "dim5lBOT";
@@ -35,10 +40,17 @@ std::filesystem::path getSavePath() {
 
 void saveMacro() {
     std::ofstream file(getSavePath());
-    for (auto& input : macroInputs) {
-        file << input.pressFrame << "," << input.releaseFrame;
-        if (input.player2) file << ",p2";
-        file << "\n";
+    int pressFrame = -1;
+    for (size_t i = 0; i < g.inputs.size(); i++) {
+        auto& inp = g.inputs[i];
+        if (!inp.player2) {
+            if (inp.pressed) {
+                pressFrame = inp.frame;
+            } else if (pressFrame >= 0) {
+                file << pressFrame << "," << inp.frame << "\n";
+                pressFrame = -1;
+            }
+        }
     }
     file.close();
 }
@@ -46,87 +58,80 @@ void saveMacro() {
 void loadMacro() {
     std::ifstream file(getSavePath());
     if (!file.is_open()) return;
-    macroInputs.clear();
+    g.inputs.clear();
     std::string line;
     while (std::getline(file, line)) {
         if (line.empty()) continue;
-        std::istringstream ss(line);
-        std::string token;
-        std::vector<std::string> parts;
-        while (std::getline(ss, token, ',')) {
-            parts.push_back(token);
-        }
-        if (parts.size() < 2) continue;
-        MacroInput input;
-        input.pressFrame = std::stoi(parts[0]);
-        input.releaseFrame = std::stoi(parts[1]);
-        input.player2 = (parts.size() >= 3 && parts[2] == "p2");
-        macroInputs.push_back(input);
+        auto comma = line.find(',');
+        if (comma == std::string::npos) continue;
+        int pressF = std::stoi(line.substr(0, comma));
+        int releaseF = std::stoi(line.substr(comma + 1));
+        g.inputs.push_back({pressF, true, false});
+        g.inputs.push_back({releaseF, false, false});
     }
+    std::sort(g.inputs.begin(), g.inputs.end(), [](const MacroInput& a, const MacroInput& b) {
+        return a.frame < b.frame;
+    });
     file.close();
 }
 
-// ===== PlayLayer Hook =====
-class $modify(PlayLayer) {
-    void resetLevel() {
-        PlayLayer::resetLevel();
-        currentFrame = 0;
-        playbackIndex = 0;
-        prevP1 = false;
-        prevP2 = false;
-        pressStartP1 = -1;
-        pressStartP2 = -1;
+// ===== PlayerObject Hook - 입력 감지 =====
+class $modify(MyPlayerObject, PlayerObject) {
+    void pushButton(PlayerButton btn) {
+        PlayerObject::pushButton(btn);
+        if (!getPlayLayer()) return;
+        if (g.recording && btn == PlayerButton::Jump) {
+            bool isP2 = getPlayLayer()->m_player2 == this;
+            g.inputs.push_back({g.frame, true, isP2});
+        }
     }
 
-    void update(float dt) {
-        PlayLayer::update(dt);
-
-        if (isRecording) {
-            bool p1 = m_player1->m_jumpBuffered;
-            bool p2 = m_player2 ? m_player2->m_jumpBuffered : false;
-
-            // Player 1
-            if (p1 && !prevP1) {
-                pressStartP1 = currentFrame;
-            } else if (!p1 && prevP1 && pressStartP1 >= 0) {
-                macroInputs.push_back({pressStartP1, currentFrame, false});
-                pressStartP1 = -1;
-            }
-            prevP1 = p1;
-
-            // Player 2
-            if (p2 && !prevP2) {
-                pressStartP2 = currentFrame;
-            } else if (!p2 && prevP2 && pressStartP2 >= 0) {
-                macroInputs.push_back({pressStartP2, currentFrame, true});
-                pressStartP2 = -1;
-            }
-            prevP2 = p2;
-
-            currentFrame++;
-        }
-
-        if (isPlaying && playbackIndex < (int)macroInputs.size()) {
-            auto& input = macroInputs[playbackIndex];
-
-            if (currentFrame == input.pressFrame) {
-                auto player = input.player2 ? m_player2 : m_player1;
-                if (player) player->pushButton(PlayerButton::Jump);
-            }
-            if (currentFrame == input.releaseFrame) {
-                auto player = input.player2 ? m_player2 : m_player1;
-                if (player) player->releaseButton(PlayerButton::Jump);
-                playbackIndex++;
-            }
-
-            currentFrame++;
+    void releaseButton(PlayerButton btn) {
+        PlayerObject::releaseButton(btn);
+        if (!getPlayLayer()) return;
+        if (g.recording && btn == PlayerButton::Jump) {
+            bool isP2 = getPlayLayer()->m_player2 == this;
+            g.inputs.push_back({g.frame, false, isP2});
         }
     }
 };
 
-// ===== Bot Menu Layer =====
+// ===== PlayLayer Hook =====
+class $modify(MyPlayLayer, PlayLayer) {
+    void resetLevel() {
+        PlayLayer::resetLevel();
+        g.frame = 0;
+        g.playIndex = 0;
+        if (g.recording) g.inputs.clear();
+    }
+
+    void update(float dt) {
+        if (g.playing) {
+            while (g.playIndex < (int)g.inputs.size() &&
+                   g.inputs[g.playIndex].frame == g.frame) {
+                auto& input = g.inputs[g.playIndex];
+                auto player = input.player2 ? m_player2 : m_player1;
+                if (player) {
+                    if (input.pressed)
+                        player->pushButton(PlayerButton::Jump);
+                    else
+                        player->releaseButton(PlayerButton::Jump);
+                }
+                g.playIndex++;
+            }
+        }
+
+        PlayLayer::update(dt);
+
+        if (g.recording || g.playing) g.frame++;
+    }
+};
+
+// ===== Bot Menu =====
 class BotMenuLayer : public CCLayer {
 public:
+    CCLabelBMFont* statusLabel = nullptr;
+
     static BotMenuLayer* create() {
         auto ret = new BotMenuLayer();
         if (ret && ret->init()) {
@@ -142,15 +147,26 @@ public:
 
         auto winSize = CCDirector::sharedDirector()->getWinSize();
 
-        auto bg = CCScale9Sprite::create("GJ_square01.png");
-        bg->setContentSize({320, 300});
-        bg->setPosition(winSize / 2);
-        addChild(bg);
+        auto dimBg = CCLayerColor::create({0, 0, 0, 120});
+        dimBg->setContentSize(winSize);
+        addChild(dimBg);
+
+        auto panel = CCScale9Sprite::create("GJ_square01.png");
+        panel->setContentSize({300, 340});
+        panel->setPosition(winSize / 2);
+        addChild(panel);
 
         auto title = CCLabelBMFont::create("dim5lBOT", "goldFont.fnt");
-        title->setPosition(winSize.width / 2, winSize.height / 2 + 120);
-        title->setScale(0.8f);
+        title->setPosition(winSize.width / 2, winSize.height / 2 + 140);
+        title->setScale(0.9f);
         addChild(title);
+
+        statusLabel = CCLabelBMFont::create("Idle", "chatFont.fnt");
+        statusLabel->setPosition(winSize.width / 2, winSize.height / 2 + 112);
+        statusLabel->setScale(0.6f);
+        statusLabel->setColor({255, 255, 100});
+        addChild(statusLabel);
+        updateStatus();
 
         auto recBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Record", "goldFont.fnt", "GJ_button_01.png"),
@@ -178,40 +194,56 @@ public:
         );
 
         auto menu = CCMenu::create(recBtn, playBtn, stopBtn, saveBtn, loadBtn, closeBtn, nullptr);
-        menu->alignItemsVerticallyWithPadding(6);
+        menu->alignItemsVerticallyWithPadding(5);
         menu->setPosition(winSize / 2);
         addChild(menu);
 
         return true;
     }
 
+    void updateStatus() {
+        if (!statusLabel) return;
+        if (g.recording)
+            statusLabel->setString("Recording...");
+        else if (g.playing)
+            statusLabel->setString("Playing...");
+        else if (!g.inputs.empty()) {
+            auto str = fmt::format("Loaded ({} inputs)", g.inputs.size());
+            statusLabel->setString(str.c_str());
+        } else {
+            statusLabel->setString("Idle - No macro");
+        }
+    }
+
     void onRecord(CCObject*) {
-        macroInputs.clear();
-        isRecording = true;
-        isPlaying = false;
-        FLAlertLayer::create("dim5lBOT", "Recording started!", "OK")->show();
+        g.inputs.clear();
+        g.recording = true;
+        g.playing = false;
+        g.frame = 0;
+        removeFromParentAndCleanup(true);
     }
 
     void onPlay(CCObject*) {
-        if (macroInputs.empty()) {
+        if (g.inputs.empty()) {
             FLAlertLayer::create("dim5lBOT", "No macro loaded!", "OK")->show();
             return;
         }
-        isRecording = false;
-        isPlaying = true;
-        playbackIndex = 0;
-        currentFrame = 0;
-        FLAlertLayer::create("dim5lBOT", "Playback started!", "OK")->show();
+        g.recording = false;
+        g.playing = true;
+        g.playIndex = 0;
+        g.frame = 0;
+        removeFromParentAndCleanup(true);
     }
 
     void onStop(CCObject*) {
-        isRecording = false;
-        isPlaying = false;
+        g.recording = false;
+        g.playing = false;
+        updateStatus();
         FLAlertLayer::create("dim5lBOT", "Stopped!", "OK")->show();
     }
 
     void onSave(CCObject*) {
-        if (macroInputs.empty()) {
+        if (g.inputs.empty()) {
             FLAlertLayer::create("dim5lBOT", "Nothing to save!", "OK")->show();
             return;
         }
@@ -221,11 +253,13 @@ public:
 
     void onLoad(CCObject*) {
         loadMacro();
-        if (macroInputs.empty()) {
+        if (g.inputs.empty()) {
             FLAlertLayer::create("dim5lBOT", "No save file found!", "OK")->show();
             return;
         }
-        FLAlertLayer::create("dim5lBOT", "Macro loaded!", "OK")->show();
+        auto str = fmt::format("Loaded {} inputs!", g.inputs.size());
+        FLAlertLayer::create("dim5lBOT", str.c_str(), "OK")->show();
+        updateStatus();
     }
 
     void onClose(CCObject*) {
@@ -233,49 +267,52 @@ public:
     }
 };
 
-// ===== Add Button to Main Menu =====
+void openBotMenu(CCNode* parent) {
+    auto layer = BotMenuLayer::create();
+    parent->addChild(layer, 100);
+}
+
 class $modify(MyMenuLayer, MenuLayer) {
     bool init() {
         if (!MenuLayer::init()) return false;
-
         auto botBtn = CCMenuItemSpriteExtra::create(
             CircleButtonSprite::createWithSpriteFrameName("geode.loader/geode-logo-outline-gold.png"),
-            this,
-            menu_selector(MyMenuLayer::onBotMenu)
+            this, menu_selector(MyMenuLayer::onBotMenu)
         );
-
         auto menu = CCMenu::create(botBtn, nullptr);
         menu->setPosition(CCPoint(30, 30));
-        addChild(menu);
-
+        addChild(menu, 10);
         return true;
     }
-
-    void onBotMenu(CCObject*) {
-        auto layer = BotMenuLayer::create();
-        addChild(layer);
-    }
+    void onBotMenu(CCObject*) { openBotMenu(this); }
 };
-
-#include <Geode/modify/PauseLayer.hpp>
 
 class $modify(MyPauseLayer, PauseLayer) {
     void customSetup() {
         PauseLayer::customSetup();
-
-        auto pauseBtn = CCMenuItemSpriteExtra::create(
+        auto botBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("BOT", "goldFont.fnt", "GJ_button_01.png"),
-            this,
-            menu_selector(MyPauseLayer::onBotMenu)
+            this, menu_selector(MyPauseLayer::onBotMenu)
         );
-
-        auto menu = CCMenu::create(pauseBtn, nullptr);
-        menu->setPosition(CCPoint(55, 220));
-        addChild(menu);
+        botBtn->setScale(0.8f);
+        auto menu = CCMenu::create(botBtn, nullptr);
+        menu->setPosition(CCPoint(70, 200));
+        addChild(menu, 10);
     }
+    void onBotMenu(CCObject*) { openBotMenu(this); }
+};
 
-    void onBotMenu(CCObject*) {
-        auto layer = BotMenuLayer::create();
-        addChild(layer);
+class $modify(MyEndLevelLayer, EndLevelLayer) {
+    void customSetup() {
+        EndLevelLayer::customSetup();
+        auto botBtn = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("BOT", "goldFont.fnt", "GJ_button_01.png"),
+            this, menu_selector(MyEndLevelLayer::onBotMenu)
+        );
+        botBtn->setScale(0.8f);
+        auto menu = CCMenu::create(botBtn, nullptr);
+        menu->setPosition(CCPoint(70, 200));
+        addChild(menu, 10);
     }
+    void onBotMenu(CCObject*) { openBotMenu(this); }
 };
