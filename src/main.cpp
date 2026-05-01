@@ -3,7 +3,7 @@
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/EndLevelLayer.hpp>
-#include <Geode/modify/PlayerObject.hpp>
+#include <Geode/modify/GJBaseGameLayer.hpp>
 #include <vector>
 #include <fstream>
 #include <filesystem>
@@ -28,21 +28,20 @@ struct GlobalState {
 
 static GlobalState g;
 
-static PlayLayer* getPlayLayer() {
-    return PlayLayer::get();
-}
-
-std::filesystem::path getSavePath() {
+std::filesystem::path getMacroDir() {
     auto path = std::filesystem::path(geode::dirs::getSaveDir()) / "dim5lBOT";
     std::filesystem::create_directories(path);
-    return path / "macro.txt";
+    return path;
 }
 
-void saveMacro() {
-    std::ofstream file(getSavePath());
+std::filesystem::path getTempPath() {
+    return getMacroDir() / "temp.txt";
+}
+
+void writeMacroToFile(std::filesystem::path path) {
+    std::ofstream file(path);
     int pressFrame = -1;
-    for (size_t i = 0; i < g.inputs.size(); i++) {
-        auto& inp = g.inputs[i];
+    for (auto& inp : g.inputs) {
         if (!inp.player2) {
             if (inp.pressed) {
                 pressFrame = inp.frame;
@@ -55,8 +54,8 @@ void saveMacro() {
     file.close();
 }
 
-void loadMacro() {
-    std::ifstream file(getSavePath());
+void readMacroFromFile(std::filesystem::path path) {
+    std::ifstream file(path);
     if (!file.is_open()) return;
     g.inputs.clear();
     std::string line;
@@ -75,24 +74,26 @@ void loadMacro() {
     file.close();
 }
 
-// ===== PlayerObject Hook - 입력 감지 =====
-class $modify(MyPlayerObject, PlayerObject) {
-    void pushButton(PlayerButton btn) {
-        PlayerObject::pushButton(btn);
-        if (!getPlayLayer()) return;
-        if (g.recording && btn == PlayerButton::Jump) {
-            bool isP2 = getPlayLayer()->m_player2 == this;
-            g.inputs.push_back({g.frame, true, isP2});
-        }
-    }
+// ===== GJBaseGameLayer Hook - xdBot 방식 =====
+class $modify(MyGJBaseGameLayer, GJBaseGameLayer) {
+    struct Fields {
+        bool macroInput = false;
+    };
 
-    void releaseButton(PlayerButton btn) {
-        PlayerObject::releaseButton(btn);
-        if (!getPlayLayer()) return;
-        if (g.recording && btn == PlayerButton::Jump) {
-            bool isP2 = getPlayLayer()->m_player2 == this;
-            g.inputs.push_back({g.frame, false, isP2});
+    void handleButton(bool hold, int button, bool player2) {
+        if (g.playing) {
+            if (!m_fields->macroInput) {
+                GJBaseGameLayer::handleButton(hold, button, player2);
+                return;
+            }
         }
+
+        GJBaseGameLayer::handleButton(hold, button, player2);
+
+        if (!g.recording) return;
+        if (!m_player1 || m_player1->m_isDead) return;
+
+        g.inputs.push_back({g.frame, hold, player2});
     }
 };
 
@@ -102,21 +103,18 @@ class $modify(MyPlayLayer, PlayLayer) {
         PlayLayer::resetLevel();
         g.frame = 0;
         g.playIndex = 0;
-        if (g.recording) g.inputs.clear();
     }
 
     void update(float dt) {
         if (g.playing) {
+            auto& fields = static_cast<MyGJBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->m_fields.self();
+
             while (g.playIndex < (int)g.inputs.size() &&
                    g.inputs[g.playIndex].frame == g.frame) {
                 auto& input = g.inputs[g.playIndex];
-                auto player = input.player2 ? m_player2 : m_player1;
-                if (player) {
-                    if (input.pressed)
-                        player->pushButton(PlayerButton::Jump);
-                    else
-                        player->releaseButton(PlayerButton::Jump);
-                }
+                fields->macroInput = true;
+                handleButton(input.pressed, 1, input.player2);
+                fields->macroInput = false;
                 g.playIndex++;
             }
         }
@@ -124,6 +122,121 @@ class $modify(MyPlayLayer, PlayLayer) {
         PlayLayer::update(dt);
 
         if (g.recording || g.playing) g.frame++;
+    }
+};
+
+// ===== Save Name Popup =====
+class SaveNamePopup : public Popup<> {
+public:
+    TextInput* nameInput = nullptr;
+
+    static SaveNamePopup* create() {
+        auto ret = new SaveNamePopup();
+        if (ret->initAnchored(300, 160)) {
+            ret->autorelease();
+            return ret;
+        }
+        delete ret;
+        return nullptr;
+    }
+
+    bool setup() override {
+        setTitle("Save Macro");
+
+        nameInput = TextInput::create(220, "Enter filename...");
+        nameInput->setPosition({150, 90});
+        m_mainLayer->addChild(nameInput);
+
+        auto saveBtn = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Save", "goldFont.fnt", "GJ_button_01.png"),
+            this, menu_selector(SaveNamePopup::onSave)
+        );
+        auto cancelBtn = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Cancel", "goldFont.fnt", "GJ_button_06.png"),
+            this, menu_selector(SaveNamePopup::onCancel)
+        );
+
+        auto menu = CCMenu::create(saveBtn, cancelBtn, nullptr);
+        menu->alignItemsHorizontallyWithPadding(10);
+        menu->setPosition({150, 40});
+        m_mainLayer->addChild(menu);
+
+        return true;
+    }
+
+    void onSave(CCObject*) {
+        auto name = nameInput->getString();
+        if (name.empty()) {
+            FLAlertLayer::create("dim5lBOT", "Please enter a filename!", "OK")->show();
+            return;
+        }
+        auto path = getMacroDir() / (name + ".txt");
+        std::filesystem::copy_file(getTempPath(), path,
+            std::filesystem::copy_options::overwrite_existing);
+        FLAlertLayer::create("dim5lBOT", ("Saved as: " + name + ".txt").c_str(), "OK")->show();
+        onClose(nullptr);
+    }
+
+    void onCancel(CCObject*) { onClose(nullptr); }
+};
+
+// ===== Load List Popup =====
+class LoadListPopup : public Popup<> {
+public:
+    static LoadListPopup* create() {
+        auto ret = new LoadListPopup();
+        if (ret->initAnchored(320, 280)) {
+            ret->autorelease();
+            return ret;
+        }
+        delete ret;
+        return nullptr;
+    }
+
+    bool setup() override {
+        setTitle("Load Macro");
+
+        auto dir = getMacroDir();
+        int y = 210;
+        bool any = false;
+
+        for (auto& entry : std::filesystem::directory_iterator(dir)) {
+            auto path = entry.path();
+            if (path.extension() != ".txt") continue;
+            if (path.filename() == "temp.txt") continue;
+
+            any = true;
+            auto name = path.stem().string();
+
+            auto btn = CCMenuItemSpriteExtra::create(
+                ButtonSprite::create(name.c_str(), "chatFont.fnt", "GJ_button_04.png"),
+                this, menu_selector(LoadListPopup::onLoadFile)
+            );
+            btn->setUserObject(CCString::create(path.string()));
+            btn->setScale(0.8f);
+
+            auto menu = CCMenu::create(btn, nullptr);
+            menu->setPosition({160, (float)y});
+            m_mainLayer->addChild(menu);
+            y -= 45;
+        }
+
+        if (!any) {
+            auto label = CCLabelBMFont::create("No macros found!", "chatFont.fnt");
+            label->setPosition({160, 130});
+            label->setScale(0.7f);
+            m_mainLayer->addChild(label);
+        }
+
+        return true;
+    }
+
+    void onLoadFile(CCObject* sender) {
+        auto item = static_cast<CCMenuItemSpriteExtra*>(sender);
+        auto pathStr = static_cast<CCString*>(item->getUserObject())->getCString();
+        readMacroFromFile(pathStr);
+        FLAlertLayer::create("dim5lBOT", fmt::format("Loaded {} inputs!", g.inputs.size()).c_str(), "OK")->show();
+        onClose(nullptr);
     }
 };
 
@@ -207,12 +320,10 @@ public:
             statusLabel->setString("Recording...");
         else if (g.playing)
             statusLabel->setString("Playing...");
-        else if (!g.inputs.empty()) {
-            auto str = fmt::format("Loaded ({} inputs)", g.inputs.size());
-            statusLabel->setString(str.c_str());
-        } else {
+        else if (!g.inputs.empty())
+            statusLabel->setString(fmt::format("Loaded ({} inputs)", g.inputs.size()).c_str());
+        else
             statusLabel->setString("Idle - No macro");
-        }
     }
 
     void onRecord(CCObject*) {
@@ -236,30 +347,33 @@ public:
     }
 
     void onStop(CCObject*) {
+        bool wasRecording = g.recording;
         g.recording = false;
         g.playing = false;
+
+        if (wasRecording && !g.inputs.empty()) {
+            writeMacroToFile(getTempPath());
+            FLAlertLayer::create("dim5lBOT", fmt::format("Stopped! {} inputs recorded.\nUse Save to name it.", g.inputs.size()).c_str(), "OK")->show();
+        } else {
+            FLAlertLayer::create("dim5lBOT", "Stopped!", "OK")->show();
+        }
         updateStatus();
-        FLAlertLayer::create("dim5lBOT", "Stopped!", "OK")->show();
     }
 
     void onSave(CCObject*) {
-        if (g.inputs.empty()) {
-            FLAlertLayer::create("dim5lBOT", "Nothing to save!", "OK")->show();
+        if (!std::filesystem::exists(getTempPath())) {
+            FLAlertLayer::create("dim5lBOT", "No temp file! Record first.", "OK")->show();
             return;
         }
-        saveMacro();
-        FLAlertLayer::create("dim5lBOT", "Macro saved!", "OK")->show();
+        auto popup = SaveNamePopup::create();
+        if (auto parent = getParent())
+            parent->addChild(popup, 200);
     }
 
     void onLoad(CCObject*) {
-        loadMacro();
-        if (g.inputs.empty()) {
-            FLAlertLayer::create("dim5lBOT", "No save file found!", "OK")->show();
-            return;
-        }
-        auto str = fmt::format("Loaded {} inputs!", g.inputs.size());
-        FLAlertLayer::create("dim5lBOT", str.c_str(), "OK")->show();
-        updateStatus();
+        auto popup = LoadListPopup::create();
+        if (auto parent = getParent())
+            parent->addChild(popup, 200);
     }
 
     void onClose(CCObject*) {
