@@ -256,3 +256,26 @@ class $modify(MyMenuLayer, MenuLayer) {
         addChild(layer);
     }
 };
+
+#include <Geode/modify/PauseLayer.hpp>
+
+class $modify(MyPauseLayer, PauseLayer) {
+    void customSetup() {
+        PauseLayer::customSetup();
+
+        auto pauseBtn = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("BOT", "goldFont.fnt", "GJ_button_01.png"),
+            this,
+            menu_selector(MyPauseLayer::onBotMenu)
+        );
+
+        auto menu = CCMenu::create(pauseBtn, nullptr);
+        menu->setPosition(CCPoint(55, 220));
+        addChild(menu);
+    }
+
+    void onBotMenu(CCObject*) {
+        auto layer = BotMenuLayer::create();
+        addChild(layer);
+    }
+};
