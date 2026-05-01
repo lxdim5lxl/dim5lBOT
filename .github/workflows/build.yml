@@ -3,8 +3,6 @@ name: Build Mod
 on:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
 
 jobs:
   build:
@@ -25,12 +23,10 @@ jobs:
           name: dim5lBOT
           path: ${{ github.workspace }}/build/*.geode
 
-      - name: Auto Release
-        uses: marvinpinto/action-automatic-releases@latest
-        if: github.ref == 'refs/heads/main'
+      - name: Release
+        uses: softprops/action-gh-release@v2
         with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: "latest"
-          prerelease: false
-          title: "dim5lBOT Latest Build"
+          tag_name: latest
+          name: "dim5lBOT Latest Build"
           files: ${{ github.workspace }}/build/*.geode
+          token: ${{ secrets.GITHUB_TOKEN }}
