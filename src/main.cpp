@@ -4,6 +4,7 @@
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/EndLevelLayer.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
+#include <Geode/ui/Popup.hpp>
 #include <vector>
 #include <fstream>
 #include <filesystem>
@@ -24,6 +25,7 @@ struct GlobalState {
     bool playing = false;
     int frame = 0;
     int playIndex = 0;
+    bool macroInput = false;
 };
 
 static GlobalState g;
@@ -74,20 +76,9 @@ void readMacroFromFile(std::filesystem::path path) {
     file.close();
 }
 
-// ===== GJBaseGameLayer Hook - xdBot 방식 =====
+// ===== GJBaseGameLayer Hook =====
 class $modify(MyGJBaseGameLayer, GJBaseGameLayer) {
-    struct Fields {
-        bool macroInput = false;
-    };
-
     void handleButton(bool hold, int button, bool player2) {
-        if (g.playing) {
-            if (!m_fields->macroInput) {
-                GJBaseGameLayer::handleButton(hold, button, player2);
-                return;
-            }
-        }
-
         GJBaseGameLayer::handleButton(hold, button, player2);
 
         if (!g.recording) return;
@@ -107,14 +98,12 @@ class $modify(MyPlayLayer, PlayLayer) {
 
     void update(float dt) {
         if (g.playing) {
-            auto& fields = static_cast<MyGJBaseGameLayer*>(static_cast<GJBaseGameLayer*>(this))->m_fields.self();
-
             while (g.playIndex < (int)g.inputs.size() &&
                    g.inputs[g.playIndex].frame == g.frame) {
                 auto& input = g.inputs[g.playIndex];
-                fields->macroInput = true;
+                g.macroInput = true;
                 handleButton(input.pressed, 1, input.player2);
-                fields->macroInput = false;
+                g.macroInput = false;
                 g.playIndex++;
             }
         }
@@ -141,11 +130,11 @@ public:
     }
 
     bool setup() override {
-        setTitle("Save Macro");
+        this->setTitle("Save Macro");
 
         nameInput = TextInput::create(220, "Enter filename...");
         nameInput->setPosition({150, 90});
-        m_mainLayer->addChild(nameInput);
+        this->m_mainLayer->addChild(nameInput);
 
         auto saveBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Save", "goldFont.fnt", "GJ_button_01.png"),
@@ -159,7 +148,7 @@ public:
         auto menu = CCMenu::create(saveBtn, cancelBtn, nullptr);
         menu->alignItemsHorizontallyWithPadding(10);
         menu->setPosition({150, 40});
-        m_mainLayer->addChild(menu);
+        this->m_mainLayer->addChild(menu);
 
         return true;
     }
@@ -174,10 +163,10 @@ public:
         std::filesystem::copy_file(getTempPath(), path,
             std::filesystem::copy_options::overwrite_existing);
         FLAlertLayer::create("dim5lBOT", ("Saved as: " + name + ".txt").c_str(), "OK")->show();
-        onClose(nullptr);
+        this->onClose(nullptr);
     }
 
-    void onCancel(CCObject*) { onClose(nullptr); }
+    void onCancel(CCObject*) { this->onClose(nullptr); }
 };
 
 // ===== Load List Popup =====
@@ -194,7 +183,7 @@ public:
     }
 
     bool setup() override {
-        setTitle("Load Macro");
+        this->setTitle("Load Macro");
 
         auto dir = getMacroDir();
         int y = 210;
@@ -217,7 +206,7 @@ public:
 
             auto menu = CCMenu::create(btn, nullptr);
             menu->setPosition({160, (float)y});
-            m_mainLayer->addChild(menu);
+            this->m_mainLayer->addChild(menu);
             y -= 45;
         }
 
@@ -225,7 +214,7 @@ public:
             auto label = CCLabelBMFont::create("No macros found!", "chatFont.fnt");
             label->setPosition({160, 130});
             label->setScale(0.7f);
-            m_mainLayer->addChild(label);
+            this->m_mainLayer->addChild(label);
         }
 
         return true;
@@ -236,7 +225,7 @@ public:
         auto pathStr = static_cast<CCString*>(item->getUserObject())->getCString();
         readMacroFromFile(pathStr);
         FLAlertLayer::create("dim5lBOT", fmt::format("Loaded {} inputs!", g.inputs.size()).c_str(), "OK")->show();
-        onClose(nullptr);
+        this->onClose(nullptr);
     }
 };
 
