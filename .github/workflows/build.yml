@@ -24,3 +24,13 @@ jobs:
         with:
           name: dim5lBOT
           path: ${{ github.workspace }}/build/*.geode
+
+      - name: Auto Release
+        uses: marvinpinto/action-automatic-releases@latest
+        if: github.ref == 'refs/heads/main'
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: "latest"
+          prerelease: false
+          title: "dim5lBOT Latest Build"
+          files: ${{ github.workspace }}/build/*.geode
