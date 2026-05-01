@@ -8,7 +8,7 @@
         },
         "id": "lxdim5lxl.dim5lbot",
         "name": "dim5lBOT",
-        "version": "v1.0.0",
+        "version": "v1.0.0-beta",
         "developer": "lxdim5lxl",
         "description": "A bot mod for Geometry Dash",
         "dependencies": {
