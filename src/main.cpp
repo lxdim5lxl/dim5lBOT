@@ -4,7 +4,6 @@
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/EndLevelLayer.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
-#include <Geode/ui/Popup.hpp>
 #include <vector>
 #include <fstream>
 #include <filesystem>
@@ -107,14 +106,14 @@ class $modify(MyPlayLayer, PlayLayer) {
     }
 };
 
-// ===== Save Name Popup =====
-class SaveNamePopup : public geode::Popup<> {
+// ===== Save Name Layer =====
+class SaveNameLayer : public CCLayer {
 public:
     TextInput* nameInput = nullptr;
 
-    static SaveNamePopup* create() {
-        auto ret = new SaveNamePopup();
-        if (ret->initAnchored(300, 160, "GJ_square01.png")) {
+    static SaveNameLayer* create() {
+        auto ret = new SaveNameLayer();
+        if (ret && ret->init()) {
             ret->autorelease();
             return ret;
         }
@@ -122,26 +121,42 @@ public:
         return nullptr;
     }
 
-    bool setup() override {
-        this->setTitle("Save Macro");
+    bool init() {
+        if (!CCLayer::init()) return false;
 
-        nameInput = TextInput::create(220, "Enter filename...");
-        nameInput->setPosition({150, 90});
-        this->m_mainLayer->addChild(nameInput);
+        auto winSize = CCDirector::sharedDirector()->getWinSize();
+
+        auto dimBg = CCLayerColor::create({0, 0, 0, 150});
+        dimBg->setContentSize(winSize);
+        addChild(dimBg);
+
+        auto panel = CCScale9Sprite::create("GJ_square01.png");
+        panel->setContentSize({280, 160});
+        panel->setPosition(winSize / 2);
+        addChild(panel);
+
+        auto title = CCLabelBMFont::create("Save Macro", "goldFont.fnt");
+        title->setPosition(winSize.width / 2, winSize.height / 2 + 60);
+        title->setScale(0.7f);
+        addChild(title);
+
+        nameInput = TextInput::create(200, "Enter filename...");
+        nameInput->setPosition(winSize / 2);
+        addChild(nameInput);
 
         auto saveBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Save", "goldFont.fnt", "GJ_button_01.png"),
-            this, menu_selector(SaveNamePopup::onSave)
+            this, menu_selector(SaveNameLayer::onSave)
         );
         auto cancelBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Cancel", "goldFont.fnt", "GJ_button_06.png"),
-            this, menu_selector(SaveNamePopup::onCancel)
+            this, menu_selector(SaveNameLayer::onCancel)
         );
 
         auto menu = CCMenu::create(saveBtn, cancelBtn, nullptr);
         menu->alignItemsHorizontallyWithPadding(10);
-        menu->setPosition({150, 40});
-        this->m_mainLayer->addChild(menu);
+        menu->setPosition(winSize.width / 2, winSize.height / 2 - 50);
+        addChild(menu);
 
         return true;
     }
@@ -156,18 +171,20 @@ public:
         std::filesystem::copy_file(getTempPath(), path,
             std::filesystem::copy_options::overwrite_existing);
         FLAlertLayer::create("dim5lBOT", ("Saved as: " + name + ".txt").c_str(), "OK")->show();
-        this->onClose(nullptr);
+        removeFromParentAndCleanup(true);
     }
 
-    void onCancel(CCObject*) { this->onClose(nullptr); }
+    void onCancel(CCObject*) {
+        removeFromParentAndCleanup(true);
+    }
 };
 
-// ===== Load List Popup =====
-class LoadListPopup : public geode::Popup<> {
+// ===== Load List Layer =====
+class LoadListLayer : public CCLayer {
 public:
-    static LoadListPopup* create() {
-        auto ret = new LoadListPopup();
-        if (ret->initAnchored(320, 280, "GJ_square01.png")) {
+    static LoadListLayer* create() {
+        auto ret = new LoadListLayer();
+        if (ret && ret->init()) {
             ret->autorelease();
             return ret;
         }
@@ -175,11 +192,27 @@ public:
         return nullptr;
     }
 
-    bool setup() override {
-        this->setTitle("Load Macro");
+    bool init() {
+        if (!CCLayer::init()) return false;
+
+        auto winSize = CCDirector::sharedDirector()->getWinSize();
+
+        auto dimBg = CCLayerColor::create({0, 0, 0, 150});
+        dimBg->setContentSize(winSize);
+        addChild(dimBg);
+
+        auto panel = CCScale9Sprite::create("GJ_square01.png");
+        panel->setContentSize({300, 280});
+        panel->setPosition(winSize / 2);
+        addChild(panel);
+
+        auto title = CCLabelBMFont::create("Load Macro", "goldFont.fnt");
+        title->setPosition(winSize.width / 2, winSize.height / 2 + 120);
+        title->setScale(0.7f);
+        addChild(title);
 
         auto dir = getMacroDir();
-        int y = 210;
+        float y = winSize.height / 2 + 70;
         bool any = false;
 
         for (auto& entry : std::filesystem::directory_iterator(dir)) {
@@ -192,23 +225,31 @@ public:
 
             auto btn = CCMenuItemSpriteExtra::create(
                 ButtonSprite::create(name.c_str(), "chatFont.fnt", "GJ_button_04.png"),
-                this, menu_selector(LoadListPopup::onLoadFile)
+                this, menu_selector(LoadListLayer::onLoadFile)
             );
             btn->setUserObject(CCString::create(path.string()));
             btn->setScale(0.8f);
 
             auto menu = CCMenu::create(btn, nullptr);
-            menu->setPosition({160, (float)y});
-            this->m_mainLayer->addChild(menu);
+            menu->setPosition(winSize.width / 2, y);
+            addChild(menu);
             y -= 45;
         }
 
         if (!any) {
             auto label = CCLabelBMFont::create("No macros found!", "chatFont.fnt");
-            label->setPosition({160, 130});
+            label->setPosition(winSize / 2);
             label->setScale(0.7f);
-            this->m_mainLayer->addChild(label);
+            addChild(label);
         }
+
+        auto closeBtn = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Close", "goldFont.fnt", "GJ_button_05.png"),
+            this, menu_selector(LoadListLayer::onClose)
+        );
+        auto closeMenu = CCMenu::create(closeBtn, nullptr);
+        closeMenu->setPosition(winSize.width / 2, winSize.height / 2 - 110);
+        addChild(closeMenu);
 
         return true;
     }
@@ -218,7 +259,11 @@ public:
         auto pathStr = static_cast<CCString*>(item->getUserObject())->getCString();
         readMacroFromFile(pathStr);
         FLAlertLayer::create("dim5lBOT", fmt::format("Loaded {} inputs!", g.inputs.size()).c_str(), "OK")->show();
-        this->onClose(nullptr);
+        removeFromParentAndCleanup(true);
+    }
+
+    void onClose(CCObject*) {
+        removeFromParentAndCleanup(true);
     }
 };
 
@@ -349,15 +394,17 @@ public:
             FLAlertLayer::create("dim5lBOT", "No temp file! Record first.", "OK")->show();
             return;
         }
-        auto popup = SaveNamePopup::create();
-        if (auto parent = getParent())
-            parent->addChild(popup, 200);
+        if (auto parent = getParent()) {
+            auto layer = SaveNameLayer::create();
+            parent->addChild(layer, 200);
+        }
     }
 
     void onLoad(CCObject*) {
-        auto popup = LoadListPopup::create();
-        if (auto parent = getParent())
-            parent->addChild(popup, 200);
+        if (auto parent = getParent()) {
+            auto layer = LoadListLayer::create();
+            parent->addChild(layer, 200);
+        }
     }
 
     void onClose(CCObject*) {
