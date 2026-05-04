@@ -113,7 +113,7 @@ public:
 
     static SaveNamePopup* create() {
         auto ret = new SaveNamePopup();
-        if (ret->initAnchored(300, 160)) {
+        if (ret->initAnchored(300, 160, "GJ_square01.png")) {
             ret->autorelease();
             return ret;
         }
@@ -166,7 +166,7 @@ class LoadListPopup : public geode::Popup<> {
 public:
     static LoadListPopup* create() {
         auto ret = new LoadListPopup();
-        if (ret->initAnchored(320, 280)) {
+        if (ret->initAnchored(320, 280, "GJ_square01.png")) {
             ret->autorelease();
             return ret;
         }
