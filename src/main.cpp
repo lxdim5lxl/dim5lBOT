@@ -4,6 +4,7 @@
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/EndLevelLayer.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
+#include <Geode/ui/Popup.hpp>
 #include <vector>
 #include <fstream>
 #include <filesystem>
