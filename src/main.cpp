@@ -39,17 +39,10 @@ std::filesystem::path getTempPath() {
 }
 
 void writeMacroToFile(std::filesystem::path path) {
+    // inputs를 그대로 저장 (press/release 각각 한 줄)
     std::ofstream file(path);
-    int pressFrame = -1;
     for (auto& inp : g.inputs) {
-        if (!inp.player2) {
-            if (inp.pressed) {
-                pressFrame = inp.frame;
-            } else if (pressFrame >= 0) {
-                file << pressFrame << "," << inp.frame << "\n";
-                pressFrame = -1;
-            }
-        }
+        file << inp.frame << "," << (inp.pressed ? 1 : 0) << "," << (inp.player2 ? 1 : 0) << "\n";
     }
     file.close();
 }
@@ -61,16 +54,17 @@ void readMacroFromFile(std::filesystem::path path) {
     std::string line;
     while (std::getline(file, line)) {
         if (line.empty()) continue;
-        auto comma = line.find(',');
-        if (comma == std::string::npos) continue;
-        int pressF = std::stoi(line.substr(0, comma));
-        int releaseF = std::stoi(line.substr(comma + 1));
-        g.inputs.push_back({pressF, true, false});
-        g.inputs.push_back({releaseF, false, false});
+        std::istringstream ss(line);
+        std::string token;
+        std::vector<std::string> parts;
+        while (std::getline(ss, token, ',')) parts.push_back(token);
+        if (parts.size() < 3) continue;
+        MacroInput inp;
+        inp.frame = std::stoi(parts[0]);
+        inp.pressed = parts[1] == "1";
+        inp.player2 = parts[2] == "1";
+        g.inputs.push_back(inp);
     }
-    std::sort(g.inputs.begin(), g.inputs.end(), [](const MacroInput& a, const MacroInput& b) {
-        return a.frame < b.frame;
-    });
     file.close();
 }
 
@@ -174,9 +168,7 @@ public:
         removeFromParentAndCleanup(true);
     }
 
-    void onCancel(CCObject*) {
-        removeFromParentAndCleanup(true);
-    }
+    void onCancel(CCObject*) { removeFromParentAndCleanup(true); }
 };
 
 // ===== Load List Layer =====
@@ -262,9 +254,7 @@ public:
         removeFromParentAndCleanup(true);
     }
 
-    void onClose(CCObject*) {
-        removeFromParentAndCleanup(true);
-    }
+    void onClose(CCObject*) { removeFromParentAndCleanup(true); }
 };
 
 // ===== Bot Menu =====
@@ -407,9 +397,7 @@ public:
         }
     }
 
-    void onClose(CCObject*) {
-        removeFromParentAndCleanup(true);
-    }
+    void onClose(CCObject*) { removeFromParentAndCleanup(true); }
 };
 
 void openBotMenu(CCNode* parent) {
