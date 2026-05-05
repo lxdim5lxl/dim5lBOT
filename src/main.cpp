@@ -1,6 +1,5 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
-#include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/PauseLayer.hpp>
 #include <Geode/modify/EndLevelLayer.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
@@ -22,6 +21,7 @@ struct GlobalState {
     std::vector<MacroInput> inputs;
     bool recording = false;
     bool playing = false;
+    bool isPlayingMacro = false; // 재생중 입력을 녹화 안하기 위한 플래그
     int frame = 0;
     int playIndex = 0;
 };
@@ -39,7 +39,6 @@ std::filesystem::path getTempPath() {
 }
 
 void writeMacroToFile(std::filesystem::path path) {
-    // inputs를 그대로 저장 (press/release 각각 한 줄)
     std::ofstream file(path);
     for (auto& inp : g.inputs) {
         file << inp.frame << "," << (inp.pressed ? 1 : 0) << "," << (inp.player2 ? 1 : 0) << "\n";
@@ -68,34 +67,52 @@ void readMacroFromFile(std::filesystem::path path) {
     file.close();
 }
 
-// ===== GJBaseGameLayer Hook =====
+// ===== GJBaseGameLayer Hook - 녹화 =====
 class $modify(MyGJBaseGameLayer, GJBaseGameLayer) {
     void handleButton(bool hold, int button, bool player2) {
         GJBaseGameLayer::handleButton(hold, button, player2);
+
+        // 재생 중 입력은 녹화하지 않음
+        if (g.isPlayingMacro) return;
         if (!g.recording) return;
         if (!m_player1 || m_player1->m_isDead) return;
+
         g.inputs.push_back({g.frame, hold, player2});
     }
 };
 
-// ===== PlayLayer Hook =====
+// ===== PlayLayer Hook - 프레임 카운트 및 재생 =====
 class $modify(MyPlayLayer, PlayLayer) {
     void resetLevel() {
         PlayLayer::resetLevel();
+        // 리스폰 시 프레임 및 재생 인덱스 초기화
         g.frame = 0;
         g.playIndex = 0;
     }
 
     void update(float dt) {
+        // update 호출 전에 재생 입력 주입
+        // 이렇게 해야 해당 프레임의 물리 연산에 반영됨
         if (g.playing) {
             while (g.playIndex < (int)g.inputs.size() &&
                    g.inputs[g.playIndex].frame == g.frame) {
                 auto& input = g.inputs[g.playIndex];
-                handleButton(input.pressed, 1, input.player2);
+                auto player = input.player2 ? m_player2 : m_player1;
+                if (player) {
+                    g.isPlayingMacro = true;
+                    if (input.pressed)
+                        player->pushButton(PlayerButton::Jump);
+                    else
+                        player->releaseButton(PlayerButton::Jump);
+                    g.isPlayingMacro = false;
+                }
                 g.playIndex++;
             }
         }
+
         PlayLayer::update(dt);
+
+        // update 후 프레임 증가
         if (g.recording || g.playing) g.frame++;
     }
 };
@@ -250,7 +267,8 @@ public:
         auto item = static_cast<CCMenuItemSpriteExtra*>(sender);
         auto pathStr = static_cast<CCString*>(item->getUserObject())->getCString();
         readMacroFromFile(pathStr);
-        FLAlertLayer::create("dim5lBOT", fmt::format("Loaded {} inputs!", g.inputs.size()).c_str(), "OK")->show();
+        FLAlertLayer::create("dim5lBOT",
+            fmt::format("Loaded {} inputs!", g.inputs.size()).c_str(), "OK")->show();
         removeFromParentAndCleanup(true);
     }
 
@@ -348,6 +366,7 @@ public:
         g.recording = true;
         g.playing = false;
         g.frame = 0;
+        g.playIndex = 0;
         removeFromParentAndCleanup(true);
     }
 
@@ -360,6 +379,10 @@ public:
         g.playing = true;
         g.playIndex = 0;
         g.frame = 0;
+        // 레벨을 처음부터 재시작해야 frame이 맞음
+        if (auto pl = PlayLayer::get()) {
+            pl->resetLevelFromStart();
+        }
         removeFromParentAndCleanup(true);
     }
 
@@ -371,7 +394,7 @@ public:
         if (wasRecording && !g.inputs.empty()) {
             writeMacroToFile(getTempPath());
             FLAlertLayer::create("dim5lBOT",
-                fmt::format("Stopped! {} inputs recorded.\nUse Save to name it.", g.inputs.size()).c_str(),
+                fmt::format("Stopped! {} inputs.\nUse Save to name it.", g.inputs.size()).c_str(),
                 "OK")->show();
         } else {
             FLAlertLayer::create("dim5lBOT", "Stopped!", "OK")->show();
@@ -405,20 +428,7 @@ void openBotMenu(CCNode* parent) {
     parent->addChild(layer, 100);
 }
 
-class $modify(MyMenuLayer, MenuLayer) {
-    bool init() {
-        if (!MenuLayer::init()) return false;
-        auto botBtn = CCMenuItemSpriteExtra::create(
-            CircleButtonSprite::createWithSpriteFrameName("geode.loader/geode-logo-outline-gold.png"),
-            this, menu_selector(MyMenuLayer::onBotMenu)
-        );
-        auto menu = CCMenu::create(botBtn, nullptr);
-        menu->setPosition(CCPoint(30, 30));
-        addChild(menu, 10);
-        return true;
-    }
-    void onBotMenu(CCObject*) { openBotMenu(this); }
-};
+// 메인 메뉴 버튼 제거 - PauseLayer와 EndLevelLayer만 유지
 
 class $modify(MyPauseLayer, PauseLayer) {
     void customSetup() {
