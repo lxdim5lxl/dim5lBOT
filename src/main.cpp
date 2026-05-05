@@ -21,7 +21,7 @@ struct GlobalState {
     std::vector<MacroInput> inputs;
     bool recording = false;
     bool playing = false;
-    bool isPlayingMacro = false; // 재생중 입력을 녹화 안하기 위한 플래그
+    bool isMacroInput = false;
     int frame = 0;
     int playIndex = 0;
 };
@@ -67,74 +67,55 @@ void readMacroFromFile(std::filesystem::path path) {
     file.close();
 }
 
-// ===== GJBaseGameLayer Hook - 녹화 =====
 class $modify(MyGJBaseGameLayer, GJBaseGameLayer) {
     void handleButton(bool hold, int button, bool player2) {
         GJBaseGameLayer::handleButton(hold, button, player2);
-
-        // 재생 중 입력은 녹화하지 않음
-        if (g.isPlayingMacro) return;
+        if (g.isMacroInput) return;
         if (!g.recording) return;
         if (!m_player1 || m_player1->m_isDead) return;
-
         g.inputs.push_back({g.frame, hold, player2});
     }
 };
 
-// ===== PlayLayer Hook - 프레임 카운트 및 재생 =====
 class $modify(MyPlayLayer, PlayLayer) {
     void resetLevel() {
         PlayLayer::resetLevel();
-        // 리스폰 시 프레임 및 재생 인덱스 초기화
         g.frame = 0;
         g.playIndex = 0;
     }
 
     void update(float dt) {
-        // update 호출 전에 재생 입력 주입
-        // 이렇게 해야 해당 프레임의 물리 연산에 반영됨
         if (g.playing) {
             while (g.playIndex < (int)g.inputs.size() &&
                    g.inputs[g.playIndex].frame == g.frame) {
                 auto& input = g.inputs[g.playIndex];
-                auto player = input.player2 ? m_player2 : m_player1;
-                if (player) {
-                    g.isPlayingMacro = true;
-                    if (input.pressed)
-                        player->pushButton(PlayerButton::Jump);
-                    else
-                        player->releaseButton(PlayerButton::Jump);
-                    g.isPlayingMacro = false;
-                }
+                g.isMacroInput = true;
+                // GJBaseGameLayer::handleButton 직접 호출
+                GJBaseGameLayer::handleButton(input.pressed, 1, input.player2);
+                g.isMacroInput = false;
                 g.playIndex++;
             }
         }
 
         PlayLayer::update(dt);
 
-        // update 후 프레임 증가
         if (g.recording || g.playing) g.frame++;
     }
 };
 
-// ===== Save Name Layer =====
 class SaveNameLayer : public CCLayer {
 public:
     TextInput* nameInput = nullptr;
 
     static SaveNameLayer* create() {
         auto ret = new SaveNameLayer();
-        if (ret && ret->init()) {
-            ret->autorelease();
-            return ret;
-        }
+        if (ret && ret->init()) { ret->autorelease(); return ret; }
         delete ret;
         return nullptr;
     }
 
     bool init() {
         if (!CCLayer::init()) return false;
-
         auto winSize = CCDirector::sharedDirector()->getWinSize();
 
         auto dimBg = CCLayerColor::create({0, 0, 0, 150});
@@ -168,7 +149,6 @@ public:
         menu->alignItemsHorizontallyWithPadding(10);
         menu->setPosition(winSize.width / 2, winSize.height / 2 - 50);
         addChild(menu);
-
         return true;
     }
 
@@ -188,22 +168,17 @@ public:
     void onCancel(CCObject*) { removeFromParentAndCleanup(true); }
 };
 
-// ===== Load List Layer =====
 class LoadListLayer : public CCLayer {
 public:
     static LoadListLayer* create() {
         auto ret = new LoadListLayer();
-        if (ret && ret->init()) {
-            ret->autorelease();
-            return ret;
-        }
+        if (ret && ret->init()) { ret->autorelease(); return ret; }
         delete ret;
         return nullptr;
     }
 
     bool init() {
         if (!CCLayer::init()) return false;
-
         auto winSize = CCDirector::sharedDirector()->getWinSize();
 
         auto dimBg = CCLayerColor::create({0, 0, 0, 150});
@@ -228,17 +203,14 @@ public:
             auto path = entry.path();
             if (path.extension() != ".txt") continue;
             if (path.filename() == "temp.txt") continue;
-
             any = true;
             auto name = path.stem().string();
-
             auto btn = CCMenuItemSpriteExtra::create(
                 ButtonSprite::create(name.c_str(), "chatFont.fnt", "GJ_button_04.png"),
                 this, menu_selector(LoadListLayer::onLoadFile)
             );
             btn->setUserObject(CCString::create(path.string()));
             btn->setScale(0.8f);
-
             auto menu = CCMenu::create(btn, nullptr);
             menu->setPosition(winSize.width / 2, y);
             addChild(menu);
@@ -259,7 +231,6 @@ public:
         auto closeMenu = CCMenu::create(closeBtn, nullptr);
         closeMenu->setPosition(winSize.width / 2, winSize.height / 2 - 110);
         addChild(closeMenu);
-
         return true;
     }
 
@@ -275,24 +246,19 @@ public:
     void onClose(CCObject*) { removeFromParentAndCleanup(true); }
 };
 
-// ===== Bot Menu =====
 class BotMenuLayer : public CCLayer {
 public:
     CCLabelBMFont* statusLabel = nullptr;
 
     static BotMenuLayer* create() {
         auto ret = new BotMenuLayer();
-        if (ret && ret->init()) {
-            ret->autorelease();
-            return ret;
-        }
+        if (ret && ret->init()) { ret->autorelease(); return ret; }
         delete ret;
         return nullptr;
     }
 
     bool init() {
         if (!CCLayer::init()) return false;
-
         auto winSize = CCDirector::sharedDirector()->getWinSize();
 
         auto dimBg = CCLayerColor::create({0, 0, 0, 120});
@@ -345,7 +311,6 @@ public:
         menu->alignItemsVerticallyWithPadding(5);
         menu->setPosition(winSize / 2);
         addChild(menu);
-
         return true;
     }
 
@@ -379,7 +344,6 @@ public:
         g.playing = true;
         g.playIndex = 0;
         g.frame = 0;
-        // 레벨을 처음부터 재시작해야 frame이 맞음
         if (auto pl = PlayLayer::get()) {
             pl->resetLevelFromStart();
         }
@@ -390,7 +354,6 @@ public:
         bool wasRecording = g.recording;
         g.recording = false;
         g.playing = false;
-
         if (wasRecording && !g.inputs.empty()) {
             writeMacroToFile(getTempPath());
             FLAlertLayer::create("dim5lBOT",
@@ -407,28 +370,21 @@ public:
             FLAlertLayer::create("dim5lBOT", "No temp file! Record first.", "OK")->show();
             return;
         }
-        if (auto parent = getParent()) {
-            auto layer = SaveNameLayer::create();
-            parent->addChild(layer, 200);
-        }
+        if (auto parent = getParent())
+            parent->addChild(SaveNameLayer::create(), 200);
     }
 
     void onLoad(CCObject*) {
-        if (auto parent = getParent()) {
-            auto layer = LoadListLayer::create();
-            parent->addChild(layer, 200);
-        }
+        if (auto parent = getParent())
+            parent->addChild(LoadListLayer::create(), 200);
     }
 
     void onClose(CCObject*) { removeFromParentAndCleanup(true); }
 };
 
 void openBotMenu(CCNode* parent) {
-    auto layer = BotMenuLayer::create();
-    parent->addChild(layer, 100);
+    parent->addChild(BotMenuLayer::create(), 100);
 }
-
-// 메인 메뉴 버튼 제거 - PauseLayer와 EndLevelLayer만 유지
 
 class $modify(MyPauseLayer, PauseLayer) {
     void customSetup() {
