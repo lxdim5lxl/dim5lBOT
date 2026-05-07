@@ -10,7 +10,7 @@
 
 using namespace geode::prelude;
 
-struct Macro : public gdr::Replay<Macro, gdr::Input<>> {
+struct Macro : public gdr::Replay<Macro, gdr::Input> {
     Macro() : Replay("dim5lBOT", "v1.0.0") {}
 };
 
@@ -58,7 +58,7 @@ class $modify(MyGJBaseGameLayer, GJBaseGameLayer) {
         if (g.isMacroInput) return;
         if (!g.recording) return;
         if (!m_player1 || m_player1->m_isDead) return;
-        g.macro.inputs.push_back(gdr::Input<>(g.frame, button, player2, hold));
+        g.macro.inputs.push_back(gdr::Input(g.frame, button, player2, hold));
     }
 };
 
