@@ -20,7 +20,7 @@ struct GlobalState {
     bool playing = false;
     bool isMacroInput = false;
     int frame = 0;
-    int playIndex = 0;
+    size_t playIndex = 0;
 };
 
 static GlobalState g;
@@ -52,6 +52,7 @@ bool loadMacro(std::filesystem::path path) {
     return !g.macro.inputs.empty();
 }
 
+// ===== GJBaseGameLayer Hook =====
 class $modify(MyGJBaseGameLayer, GJBaseGameLayer) {
     void handleButton(bool hold, int button, bool player2) {
         GJBaseGameLayer::handleButton(hold, button, player2);
@@ -62,6 +63,7 @@ class $modify(MyGJBaseGameLayer, GJBaseGameLayer) {
     }
 };
 
+// ===== PlayLayer Hook =====
 class $modify(MyPlayLayer, PlayLayer) {
     void resetLevel() {
         PlayLayer::resetLevel();
@@ -70,8 +72,9 @@ class $modify(MyPlayLayer, PlayLayer) {
     }
 
     void update(float dt) {
-        if (g.playing) {
-            while (g.playIndex < (int)g.macro.inputs.size() &&
+        // xdBot 방식: update 전에 재생 입력 주입
+        if (g.playing && !m_player1->m_isDead && !m_levelEndAnimationStarted) {
+            while (g.playIndex < g.macro.inputs.size() &&
                    (int)g.macro.inputs[g.playIndex].frame == g.frame) {
                 auto& input = g.macro.inputs[g.playIndex];
                 g.isMacroInput = true;
@@ -80,62 +83,79 @@ class $modify(MyPlayLayer, PlayLayer) {
                 g.playIndex++;
             }
         }
+
         PlayLayer::update(dt);
+
         if (g.recording || g.playing) g.frame++;
     }
 };
 
+// ===== Save Name Layer =====
 class SaveNameLayer : public CCLayer {
 public:
     TextInput* nameInput = nullptr;
+    bool saved = false; // 중복 저장 방지
+
     static SaveNameLayer* create() {
         auto ret = new SaveNameLayer();
         if (ret && ret->init()) { ret->autorelease(); return ret; }
         delete ret; return nullptr;
     }
+
     bool init() {
         if (!CCLayer::init()) return false;
         auto winSize = CCDirector::sharedDirector()->getWinSize();
+
         auto dimBg = CCLayerColor::create({0, 0, 0, 150});
         dimBg->setContentSize(winSize);
         addChild(dimBg);
+
         auto panel = CCScale9Sprite::create("GJ_square01.png");
         panel->setContentSize({280, 160});
         panel->setPosition(winSize / 2);
         addChild(panel);
+
         auto title = CCLabelBMFont::create("Save Macro", "goldFont.fnt");
         title->setPosition(winSize.width / 2, winSize.height / 2 + 60);
         title->setScale(0.7f);
         addChild(title);
+
         nameInput = TextInput::create(200, "Enter filename...");
         nameInput->setPosition(winSize / 2);
         addChild(nameInput);
+
         auto saveBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Save", "goldFont.fnt", "GJ_button_01.png"),
             this, menu_selector(SaveNameLayer::onSave));
         auto cancelBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Cancel", "goldFont.fnt", "GJ_button_06.png"),
             this, menu_selector(SaveNameLayer::onCancel));
+
         auto menu = CCMenu::create(saveBtn, cancelBtn, nullptr);
         menu->alignItemsHorizontallyWithPadding(10);
         menu->setPosition(winSize.width / 2, winSize.height / 2 - 50);
         addChild(menu);
         return true;
     }
+
     void onSave(CCObject*) {
+        if (saved) return; // 중복 클릭 방지
         auto name = nameInput->getString();
         if (name.empty()) {
             FLAlertLayer::create("dim5lBOT", "Enter a filename!", "OK")->show();
             return;
         }
+        saved = true;
         auto path = getMacroDir() / (name + ".gdr");
         saveMacro(path);
         FLAlertLayer::create("dim5lBOT", ("Saved: " + name + ".gdr").c_str(), "OK")->show();
         removeFromParentAndCleanup(true);
     }
+
     void onCancel(CCObject*) { removeFromParentAndCleanup(true); }
 };
 
+// ===== Load List Layer =====
 class LoadListLayer : public CCLayer {
 public:
     static LoadListLayer* create() {
@@ -143,23 +163,29 @@ public:
         if (ret && ret->init()) { ret->autorelease(); return ret; }
         delete ret; return nullptr;
     }
+
     bool init() {
         if (!CCLayer::init()) return false;
         auto winSize = CCDirector::sharedDirector()->getWinSize();
+
         auto dimBg = CCLayerColor::create({0, 0, 0, 150});
         dimBg->setContentSize(winSize);
         addChild(dimBg);
+
         auto panel = CCScale9Sprite::create("GJ_square01.png");
         panel->setContentSize({300, 280});
         panel->setPosition(winSize / 2);
         addChild(panel);
+
         auto title = CCLabelBMFont::create("Load Macro", "goldFont.fnt");
         title->setPosition(winSize.width / 2, winSize.height / 2 + 120);
         title->setScale(0.7f);
         addChild(title);
+
         auto dir = getMacroDir();
         float y = winSize.height / 2 + 70;
         bool any = false;
+
         for (auto& entry : std::filesystem::directory_iterator(dir)) {
             auto path = entry.path();
             if (path.extension() != ".gdr") continue;
@@ -175,12 +201,14 @@ public:
             addChild(menu);
             y -= 45;
         }
+
         if (!any) {
             auto label = CCLabelBMFont::create("No macros found!", "chatFont.fnt");
             label->setPosition(winSize / 2);
             label->setScale(0.7f);
             addChild(label);
         }
+
         auto closeBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Close", "goldFont.fnt", "GJ_button_05.png"),
             this, menu_selector(LoadListLayer::onClose));
@@ -189,6 +217,7 @@ public:
         addChild(closeMenu);
         return true;
     }
+
     void onLoadFile(CCObject* sender) {
         auto item = static_cast<CCMenuItemSpriteExtra*>(sender);
         auto pathStr = static_cast<CCString*>(item->getUserObject())->getCString();
@@ -200,37 +229,46 @@ public:
         }
         removeFromParentAndCleanup(true);
     }
+
     void onClose(CCObject*) { removeFromParentAndCleanup(true); }
 };
 
+// ===== Bot Menu =====
 class BotMenuLayer : public CCLayer {
 public:
     CCLabelBMFont* statusLabel = nullptr;
+
     static BotMenuLayer* create() {
         auto ret = new BotMenuLayer();
         if (ret && ret->init()) { ret->autorelease(); return ret; }
         delete ret; return nullptr;
     }
+
     bool init() {
         if (!CCLayer::init()) return false;
         auto winSize = CCDirector::sharedDirector()->getWinSize();
+
         auto dimBg = CCLayerColor::create({0, 0, 0, 120});
         dimBg->setContentSize(winSize);
         addChild(dimBg);
+
         auto panel = CCScale9Sprite::create("GJ_square01.png");
         panel->setContentSize({300, 370});
         panel->setPosition(winSize / 2);
         addChild(panel);
+
         auto title = CCLabelBMFont::create("dim5lBOT", "goldFont.fnt");
         title->setPosition(winSize.width / 2, winSize.height / 2 + 155);
         title->setScale(0.9f);
         addChild(title);
+
         statusLabel = CCLabelBMFont::create("Idle", "chatFont.fnt");
         statusLabel->setPosition(winSize.width / 2, winSize.height / 2 + 127);
         statusLabel->setScale(0.6f);
         statusLabel->setColor({255, 255, 100});
         addChild(statusLabel);
         updateStatus();
+
         auto recBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Record", "goldFont.fnt", "GJ_button_01.png"),
             this, menu_selector(BotMenuLayer::onRecord));
@@ -252,12 +290,14 @@ public:
         auto closeBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Close", "goldFont.fnt", "GJ_button_05.png"),
             this, menu_selector(BotMenuLayer::onClose));
+
         auto menu = CCMenu::create(recBtn, playBtn, stopBtn, saveBtn, loadBtn, debugBtn, closeBtn, nullptr);
         menu->alignItemsVerticallyWithPadding(5);
         menu->setPosition(winSize / 2);
         addChild(menu);
         return true;
     }
+
     void updateStatus() {
         if (!statusLabel) return;
         if (g.recording) statusLabel->setString("Recording...");
@@ -266,6 +306,7 @@ public:
             statusLabel->setString(fmt::format("Loaded ({} inputs)", g.macro.inputs.size()).c_str());
         else statusLabel->setString("Idle - No macro");
     }
+
     void onRecord(CCObject*) {
         g.macro.inputs.clear();
         g.recording = true;
@@ -274,6 +315,7 @@ public:
         g.playIndex = 0;
         removeFromParentAndCleanup(true);
     }
+
     void onPlay(CCObject*) {
         if (g.macro.inputs.empty()) {
             FLAlertLayer::create("dim5lBOT", "No macro loaded!", "OK")->show();
@@ -286,6 +328,7 @@ public:
         if (auto pl = PlayLayer::get()) pl->resetLevelFromStart();
         removeFromParentAndCleanup(true);
     }
+
     void onStop(CCObject*) {
         bool wasRecording = g.recording;
         g.recording = false;
@@ -300,26 +343,29 @@ public:
         }
         updateStatus();
     }
+
     void onSave(CCObject*) {
         if (!std::filesystem::exists(getTempPath())) {
             FLAlertLayer::create("dim5lBOT", "No temp! Record first.", "OK")->show();
             return;
         }
-        if (auto parent = getParent())
-            parent->addChild(SaveNameLayer::create(), 200);
+        // BotMenuLayer를 먼저 닫고 SaveNameLayer 열기
+        auto parent = getParent();
+        removeFromParentAndCleanup(true);
+        if (parent) parent->addChild(SaveNameLayer::create(), 200);
     }
+
     void onLoad(CCObject*) {
-        if (auto parent = getParent())
-            parent->addChild(LoadListLayer::create(), 200);
+        auto parent = getParent();
+        removeFromParentAndCleanup(true);
+        if (parent) parent->addChild(LoadListLayer::create(), 200);
     }
+
     void onDebug(CCObject*) {
-        auto savePath = Mod::get()->getSaveDir();
-        auto tempPath = getTempPath();
-        bool tempExists = std::filesystem::exists(tempPath);
         auto msg = fmt::format(
             "SaveDir:\n{}\nTemp: {}\nInputs: {}\nFrame: {}\nRec: {} Play: {}",
-            savePath.string(),
-            tempExists ? "YES" : "NO",
+            Mod::get()->getSaveDir().string(),
+            std::filesystem::exists(getTempPath()) ? "YES" : "NO",
             g.macro.inputs.size(),
             g.frame,
             g.recording,
@@ -327,6 +373,7 @@ public:
         );
         FLAlertLayer::create("Debug", msg.c_str(), "OK")->show();
     }
+
     void onClose(CCObject*) { removeFromParentAndCleanup(true); }
 };
 
